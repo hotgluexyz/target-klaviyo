@@ -4,7 +4,7 @@
 from singer_sdk.sinks import RecordSink
 import time
 import requests
-
+import phonenumbers
 
 class KlaviyoSink(RecordSink):
     """Klaviyo target sink class."""
@@ -41,9 +41,14 @@ class KlaviyoSink(RecordSink):
     def process_profile(self, record):
         first_name, *last_name = record["name"].split()
         last_name = " ".join(last_name)
+
+        phone_number = record.get("phone") 
+        if phone_number:
+            phone_number = phonenumbers.parse(phone_number)
+            if phonenumbers.is_valid_number(phone_number):             
+                payload["phone_number"] = phone_number
         payload = {
             "email": record.get("email"),
-            "phone_number": record.get("phone"),
             "first_name": first_name,
             "last_name": last_name,
             # "organization": "Klaviyo",
