@@ -74,8 +74,7 @@ class KlaviyoSink(RecordSink):
             )
         if not subscribe:
             del payload["data"]["attributes"]["profiles"]["data"][0]["id"]
-        self._post(stream, payload)
-
+        response = self._post(stream, payload)
     def search_profile(self, email):
 
         params = {"filter": f"equals(email,'{email}')"}
@@ -122,6 +121,14 @@ class KlaviyoSink(RecordSink):
                         }
                     }
                 )
+        
+        if "custom_fields" in record: 
+            custom_fields = {}
+            for field in record['custom_fields']:
+                custom_fields[field['name']] = field['value']
+
+            payload.update({'properties':custom_fields})
+        
         payload = {"data": {"type": "profile", "attributes": payload}}
         if record.get("id"):
             payload["data"].update({"id": record.get("id")})
@@ -130,10 +137,11 @@ class KlaviyoSink(RecordSink):
             profile = self._post("profiles", payload)
 
         if self.config.get("list_id") and record.get("subscribe_status"):
-            if record["subscribe_status"] == "subscribed":
-                subscribe_status = True
-            elif record["subscribe_status"] == "unsubscribed":
+            if record["subscribe_status"] == "unsubscribed":
                 subscribe_status = False
+            else: 
+                subscribe_status = True
+            
             if "data" in profile:
                 if "id" in profile["data"]:
                     self.associate_list_profile(
