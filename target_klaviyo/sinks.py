@@ -84,7 +84,15 @@ class KlaviyoSink(RecordSink):
         return None
 
     def process_profile(self, record):
-        first_name, *last_name = record["name"].split()
+        if "first_name" in record:
+            first_name = record.get("first_name")
+            last_name = record.get("last_name")
+        if "name" in  record:
+            try:
+                first_name, *last_name = record["name"].split()
+            except:
+                first_name = record["name"]
+                last_name = ""
         last_name = " ".join(last_name)
         profile_search = self.search_profile(record.get("email"))
         if profile_search:
