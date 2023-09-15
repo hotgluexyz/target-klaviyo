@@ -14,11 +14,12 @@ class KlaviyoSink(RecordSink):
 
     @property
     def get_headers(self):
+        api_key = self.config.get('api_private_key',self.config.get("api_key"))
         headers = {
             "accept": "application/json",
             "revision": "2023-07-15",
             "content-type": "application/json",
-            "Authorization": f"Klaviyo-API-Key {self.config.get('api_private_key')}",
+            "Authorization": f"Klaviyo-API-Key {api_key}",
         }
         return headers
 
