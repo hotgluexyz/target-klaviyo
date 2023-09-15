@@ -13,7 +13,7 @@ class TargetKlaviyo(Target):
 
     name = "target-klaviyo"
     config_jsonschema = th.PropertiesList(
-        th.Property("api_private_key", th.StringType, required="true")
+        th.Property("api_private_key", th.StringType)
     ).to_dict()
     default_sink_class = KlaviyoSink
 
