@@ -1,45 +1,23 @@
 """Klaviyo target sink class, which handles writing streams."""
 
-
-from singer_sdk.sinks import RecordSink
-import time
-import requests
 import phonenumbers
 
+from target_klaviyo.client import KlaviyoSink
 
-class KlaviyoSink(RecordSink):
+
+class ContactsSink(KlaviyoSink):
     """Klaviyo target sink class."""
 
-    base_url = "https://a.klaviyo.com/api"
+    name = "contacts"
+    available_names = ["customers", "customer", "contacts", "contact"]
+    endpoint = "/profiles"
 
-    @property
-    def get_headers(self):
-        api_key = self.config.get('api_private_key',self.config.get("api_key"))
-        headers = {
-            "accept": "application/json",
-            "revision": "2023-07-15",
-            "content-type": "application/json",
-            "Authorization": f"Klaviyo-API-Key {api_key}",
-        }
-        return headers
-
-    def _post(self, stream, payload, req_type="POST", params={}):
-        url = f"{self.base_url}/{stream}"
-        res = requests.request(
-            method=req_type,
-            url=url,
-            json=payload,
-            headers=self.get_headers,
-            params=params,
-        )
-        if res.status_code == 429:
-            time.sleep(int(res.headers["RateLimit-Reset"]))
-            self._post(stream, payload, req_type)
-        res.raise_for_status()
-        if res.status_code == 202:
-            return True
-        print(res.text)
-        return res.json()
+    def search_profile(self, email):
+        params = {"filter": f"equals(email,'{email}')"}
+        profile = self.request_api("GET", self.endpoint, params)
+        profile = profile.json()
+        if len(profile.get("data")) > 0:
+            return profile["data"][0]
 
     def associate_list_profile(self, profile, list_id, subscribe=True):
         # stream = f"lists/{list_id}/relationships/related_resource/profiles"
@@ -75,36 +53,24 @@ class KlaviyoSink(RecordSink):
             )
         if not subscribe:
             del payload["data"]["attributes"]["profiles"]["data"][0]["id"]
-        response = self._post(stream, payload)
-    def search_profile(self, email):
+        self.request_api("POST", f"/{stream}", request_data=payload)
 
-        params = {"filter": f"equals(email,'{email}')"}
-        profile = self._post(f"profiles", None, "GET", params)
-        if len(profile.get("data")) > 0:
-            return profile["data"][0]
-        return None
+    def preprocess_record(self, record: dict, context: dict) -> None:
 
-    def process_profile(self, record):
         if "first_name" in record:
             first_name = record.get("first_name")
             last_name = record.get("last_name")
-        if "name" in  record:
+        if "name" in record:
             try:
                 first_name, *last_name = record["name"].split()
             except:
                 first_name = record["name"]
                 last_name = ""
         last_name = " ".join(last_name)
-        profile_search = self.search_profile(record.get("email"))
-        if profile_search:
-            if "id" in profile_search:
-                record["id"] = profile_search["id"]
         payload = {
             "email": record.get("email"),
             "first_name": first_name,
             "last_name": last_name,
-            # "organization": "Klaviyo",
-            # "title": "Engineer",
         }
         phone_number = record.get("phone")
         if phone_number:
@@ -130,34 +96,76 @@ class KlaviyoSink(RecordSink):
                         }
                     }
                 )
-        
-        if "custom_fields" in record: 
+
+        if "custom_fields" in record:
             custom_fields = {}
-            for field in record['custom_fields']:
-                custom_fields[field['name']] = field['value']
+            for field in record["custom_fields"]:
+                custom_fields[field["name"]] = field["value"]
+            payload.update({"properties": custom_fields})
 
-            payload.update({'properties':custom_fields})
-        
         payload = {"data": {"type": "profile", "attributes": payload}}
-        if record.get("id"):
-            payload["data"].update({"id": record.get("id")})
-            profile = self._post(f"profiles/{record.get('id')}", payload, "PATCH")
-        else:
-            profile = self._post("profiles", payload)
 
-        if self.config.get("list_id") and record.get("subscribe_status"):
-            if record["subscribe_status"] == "unsubscribed":
-                subscribe_status = False
-            else: 
-                subscribe_status = True
-            
-            if "data" in profile:
-                if "id" in profile["data"]:
-                    self.associate_list_profile(
-                        profile, self.config.get("list_id"), subscribe_status
-                    )
+        profile_search = self.search_profile(record.get("email"))
+        if profile_search:
+            if "id" in profile_search:
+                payload["data"]["id"] = profile_search["id"]
 
-    def process_record(self, record: dict, context: dict) -> None:
+        return payload
+
+    def upsert_record(self, record: dict, context: dict):
+        state_updates = dict()
+        method = "POST"
+        endpoint = self.endpoint
+        pk = self.key_properties[0] if self.key_properties else "id"
+        if record:
+            # post or put record
+            id = record.get("data", {}).get("id")
+            if id:
+                method = "PATCH"
+                endpoint = f"{endpoint}/{id}"
+            response = self.request_api(method, endpoint=endpoint, request_data=record)
+            res_json = response.json()
+            id = res_json["data"][pk]
+
+            # associate profile
+            if self.config.get("list_id") and record.get("subscribe_status"):
+                if record["subscribe_status"] == "unsubscribed":
+                    subscribe_status = False
+                else:
+                    subscribe_status = True
+
+                if "data" in res_json:
+                    if "id" in res_json["data"]:
+                        self.associate_list_profile(
+                            res_json, self.config.get("list_id"), subscribe_status
+                        )
+            return id, True, state_updates
+
+
+class FallbackSink(KlaviyoSink):
+    @property
+    def endpoint(self):
+        return f"/{self.stream_name}"
+
+    @property
+    def name(self):
+        return self.stream_name
+
+    def preprocess_record(self, record: dict, context: dict) -> None:
         """Process the record."""
-        if self.stream_name.lower() in ["customers", "customer", "contacts", "contact"]:
-            self.process_profile(record)
+        return record
+
+    def upsert_record(self, record: dict, context: dict):
+        state_updates = dict()
+        method = "POST"
+        endpoint = self.endpoint
+        pk = self.key_properties[0] if self.key_properties else "id"
+        if record:
+            # post or put record
+            id = record.get(pk)
+            if id:
+                method = "PATCH"
+                endpoint = f"{endpoint}/{id}"
+            response = self.request_api(method, endpoint=endpoint, request_data=record)
+            id = response.json()["data"][pk]
+            return id, True, state_updates
