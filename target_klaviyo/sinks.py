@@ -149,7 +149,7 @@ class FallbackSink(KlaviyoSink):
     def endpoint(self):
         """Dynamically determine the endpoint based on the stream name."""
         endpoint_mapping = {
-            "list_members": "/profiles",  # Both profile and list_members should write to /profiles
+            "list_members": "/profiles",  # Both profiles and list_members should write to /profiles
         }
 
         # Return the mapped endpoint if it exists, otherwise default to /{stream_name}
@@ -171,65 +171,70 @@ class FallbackSink(KlaviyoSink):
         except ValueError:
             print(f"Error parsing JSON response while searching for profile: {email}")
             return None
+        
+    def _build_profile_payload(self, record: dict) -> dict:
+        """Extract and structure profile payload from a flat record."""
+        first_name = record.get("first_name", "")
+        last_name = record.get("last_name", "")
+
+        # Extract names if only `name` field is provided
+        if "name" in record and not first_name:
+            try:
+                first_name, *last_name = record["name"].split()
+                last_name = " ".join(last_name)
+            except ValueError:
+                first_name, last_name = record["name"], ""
+
+        payload = {
+            "email": record.get("email"),
+            "first_name": first_name,
+            "last_name": last_name,
+        }
+
+        # Validate and add phone number
+        phone_number = record.get("phone")
+        if phone_number:
+            try:
+                parsed_number = phonenumbers.parse(phone_number, None)
+                if phonenumbers.is_valid_number(parsed_number):
+                    payload["phone_number"] = phonenumbers.format_number(
+                        parsed_number, phonenumbers.PhoneNumberFormat.E164
+                    )
+            except phonenumbers.NumberParseException:
+                print(f"Invalid phone {phone_number}. Skipping.")
+
+        # Add address if available
+        if "addresses" in record and record["addresses"]:
+            address = record["addresses"][0]  # Use the first address
+            payload["location"] = {
+                "address1": address.get("line1"),
+                "address2": address.get("line2"),
+                "city": address.get("city"),
+                "region": address.get("state"),
+                "zip": address.get("postal_code"),
+                "country": address.get("country"),
+            }
+
+        # Add custom properties
+        if "custom_fields" in record:
+            properties = {field["name"]: field["value"] for field in record["custom_fields"]}
+            payload["properties"] = properties
+
+        # Transform into Klaviyo's expected payload format
+        klaviyo_payload = {"data": {"type": "profile", "attributes": payload}}
+        
+        existing_profile = self.search_profile(record.get("email"))
+        if existing_profile and "id" in existing_profile:
+            klaviyo_payload["data"]["id"] = existing_profile["id"]
+
+        return klaviyo_payload
+
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Transforms flat payloads into Klaviyo's expected nested format for profiles and list_members."""
         
         if self.stream_name in ["profiles", "list_members"]:
-            first_name = record.get("first_name", "")
-            last_name = record.get("last_name", "")
-
-            # Extract names if only `name` field is provided
-            if "name" in record and not first_name:
-                try:
-                    first_name, *last_name = record["name"].split()
-                    last_name = " ".join(last_name)
-                except ValueError:
-                    first_name, last_name = record["name"], ""
-
-            payload = {
-                "email": record.get("email"),
-                "first_name": first_name,
-                "last_name": last_name,
-            }
-
-            # Validate and add phone number
-            phone_number = record.get("phone")
-            if phone_number:
-                try:
-                    parsed_number = phonenumbers.parse(phone_number, None)
-                    if phonenumbers.is_valid_number(parsed_number):
-                        payload["phone_number"] = phonenumbers.format_number(
-                            parsed_number, phonenumbers.PhoneNumberFormat.E164
-                        )
-                except phonenumbers.NumberParseException:
-                    print(f"Invalid phone {phone_number}. Skipping.")
-
-            # Add address if available
-            if "addresses" in record and record["addresses"]:
-                address = record["addresses"][0]  # Use the first address
-                payload["location"] = {
-                    "address1": address.get("line1"),
-                    "address2": address.get("line2"),
-                    "city": address.get("city"),
-                    "region": address.get("state"),
-                    "zip": address.get("postal_code"),
-                    "country": address.get("country"),
-                }
-
-            # Add custom properties
-            if "custom_fields" in record:
-                properties = {field["name"]: field["value"] for field in record["custom_fields"]}
-                payload["properties"] = properties
-
-            # Transform into Klaviyo's expected payload format
-            klaviyo_payload = {"data": {"type": "profile", "attributes": payload}}
-            
-            existing_profile = self.search_profile(record.get("email"))
-            if existing_profile and "id" in existing_profile:
-                klaviyo_payload["data"]["id"] = existing_profile["id"]
-
-            return klaviyo_payload
+            return self._build_profile_payload(record)
 
         return record  # Keep default behavior for other streams
 
