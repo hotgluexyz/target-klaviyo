@@ -144,6 +144,7 @@ class ContactsSink(KlaviyoSink):
 
 class FallbackSink(KlaviyoSink):
     """Handles generic Klaviyo data sync, including profiles and list_members."""
+    profile_streams = ["profiles", "list_members"]
 
     @property
     def endpoint(self):
@@ -174,54 +175,7 @@ class FallbackSink(KlaviyoSink):
         
     def _build_profile_payload(self, record: dict) -> dict:
         """Extract and structure profile payload from a flat record."""
-        first_name = record.get("first_name", "")
-        last_name = record.get("last_name", "")
-
-        # Extract names if only `name` field is provided
-        if "name" in record and not first_name:
-            try:
-                first_name, *last_name = record["name"].split()
-                last_name = " ".join(last_name)
-            except ValueError:
-                first_name, last_name = record["name"], ""
-
-        payload = {
-            "email": record.get("email"),
-            "first_name": first_name,
-            "last_name": last_name,
-        }
-
-        # Validate and add phone number
-        phone_number = record.get("phone")
-        if phone_number:
-            try:
-                parsed_number = phonenumbers.parse(phone_number, None)
-                if phonenumbers.is_valid_number(parsed_number):
-                    payload["phone_number"] = phonenumbers.format_number(
-                        parsed_number, phonenumbers.PhoneNumberFormat.E164
-                    )
-            except phonenumbers.NumberParseException:
-                print(f"Invalid phone {phone_number}. Skipping.")
-
-        # Add address if available
-        if "addresses" in record and record["addresses"]:
-            address = record["addresses"][0]  # Use the first address
-            payload["location"] = {
-                "address1": address.get("line1"),
-                "address2": address.get("line2"),
-                "city": address.get("city"),
-                "region": address.get("state"),
-                "zip": address.get("postal_code"),
-                "country": address.get("country"),
-            }
-
-        # Add custom properties
-        if "custom_fields" in record:
-            properties = {field["name"]: field["value"] for field in record["custom_fields"]}
-            payload["properties"] = properties
-
-        # Transform into Klaviyo's expected payload format
-        klaviyo_payload = {"data": {"type": "profile", "attributes": payload}}
+        klaviyo_payload = {"data": {"type": "profile", "attributes": record}}
         
         existing_profile = self.search_profile(record.get("email"))
         if existing_profile and "id" in existing_profile:
@@ -233,7 +187,7 @@ class FallbackSink(KlaviyoSink):
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Transforms flat payloads into Klaviyo's expected nested format for profiles and list_members."""
         
-        if self.stream_name in ["profiles", "list_members"]:
+        if self.stream_name in self.profile_streams:
             return self._build_profile_payload(record)
 
         return record  # Keep default behavior for other streams
@@ -283,7 +237,7 @@ class FallbackSink(KlaviyoSink):
 
         if record:
             # Determine whether to POST or PATCH
-            id = record.get("data", {}).get("id") if self.stream_name in ["profiles", "list_members"] else record.get(pk)
+            id = record.get("data", {}).get("id") if self.stream_name in self.profile_streams else record.get(pk)
             if id:
                 method = "PATCH"
                 endpoint = f"{endpoint}/{id}"
@@ -293,7 +247,7 @@ class FallbackSink(KlaviyoSink):
             id = res_json["data"][pk]
 
             # Associate profile with a list if `list_id` is provided
-            if self.config.get("list_id") and self.stream_name in ["profiles", "list_members"]:
+            if self.config.get("list_id") and self.stream_name in self.profile_streams:
                 subscribe_status = record.get("subscribe_status", "subscribed") != "unsubscribed"
                 self.associate_list_profile(res_json, self.config["list_id"], subscribe_status)
 
