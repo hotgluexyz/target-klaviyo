@@ -36,7 +36,7 @@ class TargetKlaviyo(TargetHotglue):
     def get_sink_class(self, stream_name: str):
         """Get sink for a stream."""
         # Use fallback sink based on flag
-        if self.config.get("use_fallback_sink", False):
+        if self.config.get("use_fallback_sink", True):
             return FallbackSink
 
         for sink_class in self.SINK_TYPES:
