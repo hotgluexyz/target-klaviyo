@@ -27,6 +27,7 @@ class ContactsSink(KlaviyoSink):
         elif not subscribe:
             stream = f"profile-subscription-bulk-delete-jobs"
             endpoint_type = "profile-subscription-bulk-delete-job"
+
         # payload = {"data": {"type": "profile", "id": profile}}
         payload = {
             "data": {
@@ -225,9 +226,13 @@ class FallbackSink(KlaviyoSink):
         # Remove `id` for unsubscribe operation
         if not subscribe:
             del payload["data"]["attributes"]["profiles"]["data"][0]["id"]
-
-        self.request_api("POST", f"/{stream}", request_data=payload)
-
+        
+        self.logger.info(f"Associating profile {profile['data'].get('id')} with list: {list_id}")
+        res = self.request_api("POST", f"/{stream}", request_data=payload)
+        if res.status_code == 202:
+            self.logger.info(f"Profile {profile['data'].get('id')} successfully associated with list {list_id}")
+    
+    
     def upsert_record(self, record: dict, context: dict):
         """Handles upsert operation for Klaviyo profiles and other streams."""
         state_updates = {}
