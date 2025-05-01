@@ -41,8 +41,8 @@ class TargetKlaviyo(TargetHotglue):
             # Search for streams with multiple names
             elif stream_name.lower() in sink_class.available_names:
                 return sink_class
-            
-            # Use fallback sink based on flag
+
+        # Use fallback sink based on flag
         if self.config.get("use_fallback_sink", True):
             return FallbackSink
 
