@@ -56,6 +56,20 @@ class ContactsSink(KlaviyoSink):
             del payload["data"]["attributes"]["profiles"]["data"][0]["id"]
         self.request_api("POST", f"/{stream}", request_data=payload)
 
+    def format_phone_number(self, phone_number: str) -> str:
+        """Format a phone number to E.164 format."""
+        try:
+            if not phone_number.startswith("+"):
+                phone_number = f"+{phone_number}"
+
+            phone_number = phonenumbers.parse(phone_number)
+            if phonenumbers.is_valid_number(phone_number):
+                return phonenumbers.format_number(phone_number, phonenumbers.PhoneNumberFormat.E164)
+        except Exception as e:
+            print(f"Invalid phone number: {phone_number}: {e}, skipping...")
+
+        return None
+
     def preprocess_record(self, record: dict, context: dict) -> None:
 
         if "first_name" in record:
@@ -72,16 +86,21 @@ class ContactsSink(KlaviyoSink):
             "email": record.get("email"),
             "first_name": first_name,
             "last_name": last_name,
+            "title": record.get("title"),
+            "organization": record.get("company_name")
         }
-        phone_number = record.get("phone")
-        if phone_number:
-            try:
-                phone_number = phonenumbers.parse(phone_number)
-                if phonenumbers.is_valid_number(phone_number):
+
+        if record.get("phone"):
+            phone_number = self.format_phone_number(record["phone"])
+            if phone_number:
+                payload["phone_number"] = phone_number
+        elif record.get("phone_numbers"):
+            for phone in record["phone_numbers"]:
+                phone_number = self.format_phone_number(phone["number"])
+                if phone_number:
                     payload["phone_number"] = phone_number
-            except:
-                TypeError
-                print(f"Invalid phone {phone_number}. Skipping.")
+                    break
+
         if "addresses" in record:
             if len(record["addresses"]) > 0:
                 address = record["addresses"][0]
