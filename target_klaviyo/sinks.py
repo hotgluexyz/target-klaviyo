@@ -65,8 +65,10 @@ class ContactsSink(KlaviyoSink):
             phone_number = phonenumbers.parse(phone_number)
             if phonenumbers.is_valid_number(phone_number):
                 return phonenumbers.format_number(phone_number, phonenumbers.PhoneNumberFormat.E164)
+            else:
+                self.logger.info(f"Invalid phone number: {phone_number}, skipping...")
         except Exception as e:
-            print(f"Invalid phone number: {phone_number}: {e}, skipping...")
+            self.logger.info(f"Invalid phone number: {phone_number}: {e}, skipping...")
 
         return None
 
